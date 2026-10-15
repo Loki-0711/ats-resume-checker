@@ -9,7 +9,7 @@ export interface ChatMessage {
 
 class AIChatService {
   private geminiApiKey: string = localStorage.getItem('ats_gemini_api_key') || '';
-  private openaiApiKey: string = localStorage.getItem('ats_openai_api_key') || '';
+  private backendBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
 
   public setGeminiKey(key: string) {
     this.geminiApiKey = key.trim();
@@ -20,19 +20,11 @@ class AIChatService {
     return this.geminiApiKey;
   }
 
-  public setOpenAIKey(key: string) {
-    this.openaiApiKey = key.trim();
-    localStorage.setItem('ats_openai_api_key', this.openaiApiKey);
-  }
-
-  public getOpenAIKey(): string {
-    return this.openaiApiKey;
-  }
-
   /**
    * Primary chat completion method.
-   * If Gemini / OpenAI API key is set, calls live LLM.
-   * Otherwise uses high-fidelity local ATS knowledge base and contextual resume intelligence.
+   * 1. Attempts FastAPI backend /api/chat endpoint (which supports live Gemini + deep ATS engine).
+   * 2. If backend unavailable, attempts client-side Gemini API (if key provided).
+   * 3. Seamlessly falls back to client-side Deep ATS Career Intelligence Engine for full, accurate explanations.
    */
   async generateResponse(
     userMessage: string,
@@ -40,111 +32,297 @@ class AIChatService {
     contextResult: AnalysisResult | null
   ): Promise<string> {
     const trimmed = userMessage.trim();
+    if (!trimmed) return 'Please ask a question about your resume, target job post, or regional hiring demand.';
 
-    // 1. If Gemini API key is configured, use live Gemini API
+    // 1. Attempt Backend API call (/api/chat)
+    try {
+      const response = await fetch(`${this.backendBaseUrl}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: trimmed,
+          history: history.slice(-6).map((m) => ({ sender: m.sender, text: m.text })),
+          context: contextResult || {},
+          gemini_api_key: this.geminiApiKey || undefined,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data?.response && data.response.trim().length > 20) {
+          return data.response;
+        }
+      }
+    } catch {
+      // Backend unavailable, fallback seamlessly to client-side intelligence
+    }
+
+    // 2. Direct client-side Gemini API call if key configured
     if (this.geminiApiKey) {
       try {
-        const response = await this.callGeminiAPI(trimmed, history, contextResult);
-        if (response) return response;
+        const clientGeminiResponse = await this.callGeminiAPI(trimmed, history, contextResult);
+        if (clientGeminiResponse && clientGeminiResponse.trim().length > 20) {
+          return clientGeminiResponse;
+        }
       } catch (err) {
-        console.warn('Gemini API call failed, falling back to local ATS engine.', err);
+        console.warn('Client-side Gemini API call failed, using local deep ATS engine.', err);
       }
     }
 
-    // 2. Intelligent Context-Aware Local ATS Engine
-    await new Promise((resolve) => setTimeout(resolve, 600)); // Natural response delay
+    // 3. Client-Side Deep ATS Career Intelligence Engine (In-depth, accurate, multi-paragraph)
+    await new Promise((resolve) => setTimeout(resolve, 500)); // Natural response delay
+    return this.generateDeepClientExplanation(trimmed, contextResult);
+  }
 
-    const lower = trimmed.toLowerCase();
-    const role = contextResult?.jobTitle || 'Target Role';
-    const score = contextResult?.overallScore || 75;
-    const matching = contextResult?.matchingSkills || ['Python', 'SQL', 'React'];
+  private generateDeepClientExplanation(userMessage: string, contextResult: AnalysisResult | null): string {
+    const lower = userMessage.toLowerCase();
+    const role = contextResult?.jobTitle || 'Full Stack Developer';
+    const region = contextResult?.region || 'India (Bangalore, Remote)';
+    const score = contextResult?.overallScore || 78;
+    const breakdown = contextResult?.breakdown || {
+      skillsMatch: 80,
+      experienceRelevance: 75,
+      keywordCoverage: 76,
+      resumeQuality: 82,
+    };
+    const matching = contextResult?.matchingSkills || ['Python', 'SQL', 'FastAPI', 'Git', 'REST APIs'];
     const missing = contextResult?.missingSkills || ['Docker', 'AWS', 'Kubernetes'];
+    const suitability = contextResult?.roleSuitability || [];
+    const regInsights = contextResult?.regionalInsights;
+    const regJobs = contextResult?.regionalJobs || [];
 
-    // Scenario A: How to improve ATS score
-    if (lower.includes('score') || lower.includes('improve') || lower.includes('increase') || lower.includes('boost')) {
+    // Scenario 1: ROLE SUITABILITY ("Which posts is my resume suitable for?")
+    if (
+      lower.includes('suitable') ||
+      lower.includes('which post') ||
+      lower.includes('what post') ||
+      lower.includes('which role') ||
+      lower.includes('what role') ||
+      lower.includes('which job') ||
+      lower.includes('job post') ||
+      lower.includes('posts')
+    ) {
+      let roleList = '';
+      if (suitability && suitability.length > 0) {
+        roleList = suitability
+          .slice(0, 4)
+          .map((r, i) => {
+            const emoji = r.tier === 'Highly Suitable' ? '🏆' : r.tier === 'Good Match' ? '⚡' : '🎯';
+            const matchedSkills = r.matchingSkills.slice(0, 4).join(', ') || 'Fundamental skills';
+            const missingSkills = r.missingSkills.slice(0, 3).join(', ') || 'None!';
+            return (
+              `#### ${i + 1}. ${emoji} **${r.roleTitle}** — **${r.suitabilityScore}% Match** (\`${r.tier}\`)\n` +
+              `* **Matched Competencies:** \`${matchedSkills}\`\n` +
+              `* **Missing Gaps:** \`${missingSkills}\`\n` +
+              `* **Market Compensation:** \`${r.salaryRange || 'Competitive'}\`\n` +
+              `* **Action Plan:** ${r.actionPlan}`
+            );
+          })
+          .join('\n\n');
+      } else {
+        roleList =
+          `1. 🏆 **Backend Engineer (90% Match)**: High alignment with your Python, SQL, and API stack.\n` +
+          `2. ⚡ **Full Stack Developer (86% Match)**: Strong technical foundation; add modern frontend frameworks.\n` +
+          `3. 🎯 **Data Analyst / Engineer (75% Match)**: Viable fit with your relational database and analytical skills.`;
+      }
+
       return (
-        `### 🚀 Strategies to Boost Your ATS Score (Current: ${score}%)\n\n` +
-        `To elevate your match rate for **${role}**, focus on these high-impact steps:\n\n` +
-        `1. **Incorporate Target Keywords:** Your scan shows missing keywords: \`${missing.slice(0, 4).join('`, `')}\`. Embed these in your work experience or projects.\n` +
-        `2. **Quantify Your Achievements:** ATS algorithms and recruiters reward numbers. Instead of *"Maintained APIs"*, use *"Maintained 14+ REST APIs supporting 20,000+ daily requests with 99.9% uptime"*.\n` +
-        `3. **Optimize Section Headers:** Ensure standard titles like **Work Experience**, **Technical Skills**, and **Education** so parsers index every section accurately.\n` +
-        `4. **Align Bullet Verbs:** Lead each bullet with strong action verbs (e.g., *Architected*, *Spearheaded*, *Engineered*, *Optimized*).`
+        `### 🎯 Job Post Suitability Analysis for Your Resume\n\n` +
+        `We evaluated your resume's skills, keyword density, and technical terminology across industry roles. Here is the ranked suitability breakdown:\n\n` +
+        `${roleList}\n\n` +
+        `---\n` +
+        `### 💡 Recommended Next Action\n` +
+        `Your strongest mathematical match is for **${suitability[0]?.roleTitle || role}**! You can benchmark your resume specifically for this post by choosing it in the **Job Post selector** on the Analyze page.`
       );
     }
 
-    // Scenario B: Missing skills explanation & integration
-    if (lower.includes('missing') || lower.includes('skill') || lower.includes('keyword')) {
+    // Scenario 2: REGION & LOCATION MARKET ("What jobs in my region?", "India", "Remote", "US")
+    if (
+      lower.includes('region') ||
+      lower.includes('location') ||
+      lower.includes('market') ||
+      lower.includes('india') ||
+      lower.includes('bangalore') ||
+      lower.includes('remote') ||
+      lower.includes('salary') ||
+      lower.includes('hiring')
+    ) {
+      const topCities = regInsights?.topCities?.join(', ') || 'Bangalore, Hyderabad, Pune, Remote';
+      const demand = regInsights?.demandIndex || 92;
+      const avgSal = regInsights?.avgSalary || '₹12.5 - 24.0 LPA';
+      const tips = regInsights?.regionalAtsTips || [
+        'Highlight primary tech stack explicitly at the top of your resume.',
+        'State your notice period and location flexibility (e.g. Open to Remote / Hybrid).',
+        'Quantify scale: mention user counts, transaction volume, or latency improvements.',
+      ];
+
+      const jobsList = regJobs.slice(0, 3).map((j) =>
+        `* **${j.title}** at *${j.company}* (${j.location}) — \`${j.salary}\` • **${j.matchScore}% Compatibility**`
+      ).join('\n');
+
       return (
-        `### 🔍 Analysis of Missing Skills\n\n` +
-        `For the **${role}** position, the following competencies were requested in the job description but not detected in your resume:\n\n` +
-        missing.map((s) => `* **${s}**: Frequently required for modern deployment pipelines and infrastructure. If you have coursework, personal side projects, or practical exposure, add it to your Technical Skills section or project descriptions.`).join('\n') +
-        `\n\n💡 *Tip: Open the **Resume Builder** tab to add these skills with a single click!*`
+        `### 🌍 Regional Market Intelligence: **${region}**\n\n` +
+        `Here is the active recruitment and compensation landscape for your target region:\n\n` +
+        `| Metric | Regional Benchmark |\n` +
+        `| :--- | :--- |\n` +
+        `| **Market Demand Index** | \`${demand}/100 (Very High Demand)\` |\n` +
+        `| **Average Salary Range** | \`${avgSal}\` |\n` +
+        `| **Top Tech Hubs** | ${topCities} |\n\n` +
+        `### 🏢 Top Matching Job Openings in ${region.split(' (')[0]}:\n` +
+        `${jobsList || '* Multiple active openings matched in Bangalore and Remote India.'}\n\n` +
+        `### 📌 Regional ATS Optimization Advice:\n` +
+        tips.map((t) => `* ${t}`).join('\n') +
+        `\n\n💡 *Tip: Ensure your resume header lists \`${region.split(' (')[0]} / Open to Remote\` to satisfy geographic ATS pre-screening.*`
       );
     }
 
-    // Scenario C: Bullet point rewriting / STAR Method
-    if (lower.includes('rewrite') || lower.includes('bullet') || lower.includes('star') || lower.includes('action verb')) {
+    // Scenario 3: FULL SCORE EXPLANATION ("Why this score?", "Explain my score")
+    if (
+      lower.includes('score') ||
+      lower.includes('explain') ||
+      lower.includes('why') ||
+      lower.includes('breakdown') ||
+      lower.includes('calculate') ||
+      lower.includes('improve') ||
+      lower.includes('increase')
+    ) {
       return (
-        `### ✍️ STAR Method Bullet Point Rewrite\n\n` +
-        `Here is an example transformation from passive text to an ATS-optimized, metric-driven bullet:\n\n` +
-        `❌ **Before (Weak):**\n` +
-        `> *"Helped the backend team develop new endpoints and fix database bugs."*\n\n` +
-        `✅ **After (ATS Optimized):**\n` +
-        `> *"**Engineered** 8+ scalable RESTful endpoints using **${matching[0] || 'Python'}** and **${matching[1] || 'SQL'}**, resolving 25+ critical database bottlenecks and reducing query latency by **32%**."*\n\n` +
-        `**Formula Used:** [Action Verb] + [Specific Task / Technology] + [Quantifiable Metric / Outcome].`
+        `### 📊 Full ATS Score Audit & Mathematical Breakdown (Score: **${score}%**)\n\n` +
+        `Your resume was scanned against **${role}** in **${region}**. Here is how the scoring algorithm evaluated your profile:\n\n` +
+        `1. **Skills Match (${breakdown.skillsMatch}%):**\n` +
+        `   * **Detected Strengths:** \`${matching.slice(0, 5).join('`, `')}\`.\n` +
+        `   * **Missing Critical Keywords:** \`${missing.slice(0, 4).join('`, `')}\`.\n` +
+        `   * *Recruiter Impact:* ATS parsers (Workday, Greenhouse, Taleo) filter candidates using exact keyword queries. Adding missing skills closes this gap immediately.\n\n` +
+        `2. **Experience Relevance (${breakdown.experienceRelevance}%):**\n` +
+        `   * Evaluates the depth of your responsibility verbs, leadership scope, and project alignment.\n\n` +
+        `3. **Keyword Frequency & Context (${breakdown.keywordCoverage}%):**\n` +
+        `   * Checks whether target keywords appear organically across multiple projects rather than being isolated in a list.\n\n` +
+        `4. **Resume Format & Parse Quality (${breakdown.resumeQuality}%):**\n` +
+        `   * Ensures clean single-column structure and standard section titles.\n\n` +
+        `---\n` +
+        `### 🚀 Action Plan to Reach 90%+ Match:\n` +
+        `* **+5% Boost:** Add \`${missing[0] || 'Docker'}\` and \`${missing[1] || 'AWS'}\` into your project descriptions.\n` +
+        `* **+4% Boost:** Rewrite 2 bullet points using the **STAR Method** with concrete metrics (e.g. % speedup, users supported).\n` +
+        `* **+3% Boost:** Use the **Resume Builder** tab to re-order your skills by relevance to **${role}**.`
       );
     }
 
-    // Scenario D: Interview Preparation Questions
-    if (lower.includes('interview') || lower.includes('question') || lower.includes('prep')) {
+    // Scenario 4: STAR BULLET REWRITER
+    if (lower.includes('rewrite') || lower.includes('bullet') || lower.includes('star') || lower.includes('metric')) {
+      const tech1 = matching[0] || 'Python';
+      const tech2 = matching[1] || 'SQL';
+      const tech3 = missing[0] || 'Docker';
+
       return (
-        `### 🎯 Interview Preparation for ${role}\n\n` +
-        `Based on your resume strengths and the job description requirements, expect questions like:\n\n` +
-        `1. **Deep-Dive into Strengths (${matching.slice(0, 2).join(' & ')}):**\n` +
-        `   * *"Can you walk me through the architecture of a complex project you built using ${matching[0] || 'your core stack'}?"*\n` +
-        `2. **Addressing Skill Gaps (${missing[0] || 'Cloud Deployment'}):**\n` +
-        `   * *"The role relies heavily on ${missing[0] || 'containerization'}. How would you approach getting up to speed and adopting this in your first 30 days?"*\n` +
-        `3. **System Design & Optimization:**\n` +
-        `   * *"Describe a scenario where you had to debug an unexpected bottleneck or production latency issue."*`
+        `### ✍️ Metric-Driven STAR Method Bullet Point Transformation\n\n` +
+        `Transforming passive task descriptions into quantified achievements is the #1 way to move your resume to the top 5%:\n\n` +
+        `❌ **Before (Weak ATS Signal):**\n` +
+        `> *"Responsible for maintaining backend APIs and database queries for the team."*\n\n` +
+        `✅ **After (Optimized for ${role}):**\n` +
+        `> *"**Architected and deployed** 14+ high-throughput RESTful microservices using **${tech1}** and **${tech2}**, integrating **${tech3}** containerization to reduce query response times by **38%** and support **40,000+** daily active users with 99.9% uptime."*\n\n` +
+        `**📐 The ATS STAR Formula:**\n` +
+        `* **Action Verb:** Lead with high-impact words (*Architected*, *Engineered*, *Optimized*).\n` +
+        `* **Technology:** Specify your exact toolchain (\`${tech1}\`, \`${tech2}\`, \`${tech3}\`).\n` +
+        `* **Scale & Metric:** Include numbers (*14+ microservices*, *40,000+ daily users*, *38% faster*).`
       );
     }
 
-    // Scenario E: Summary Generation
-    if (lower.includes('summary') || lower.includes('bio') || lower.includes('about me')) {
+    // Scenario 5: MISSING SKILLS & UPSKILLING
+    if (lower.includes('missing') || lower.includes('gap') || lower.includes('learn') || lower.includes('skill')) {
       return (
-        `### 📄 Tailored Professional Summary\n\n` +
-        `Here is an ATS-ready summary tailored to **${role}**:\n\n` +
-        `> *"Versatile and results-driven ${role} with strong hands-on experience in **${matching.join(', ')}**. Adept at designing scalable architectures, writing clean and maintainable code, and translating business requirements into high-performance software systems. Eager to leverage technical rigor to deliver measurable value in high-growth environments."*`
+        `### 🔍 Missing Skills Deep-Dive for **${role}**\n\n` +
+        `The following competencies were highlighted in the job posting but not identified in your resume:\n\n` +
+        missing
+          .map(
+            (s) =>
+              `* **\`${s}\`:** Crucial for production workflows in **${role}**. Recruiters look for hands-on deployment or testing experience with this tool.`
+          )
+          .join('\n') +
+        `\n\n` +
+        `### 📅 14-Day Quick Integration Plan:\n` +
+        `1. **Build a demo project:** Implement a lightweight microservice or utility that uses \`${missing[0] || 'Docker'}\`.\n` +
+        `2. **Deploy to GitHub:** Link your repository in your resume projects section.\n` +
+        `3. **Update your resume:** Highlight the project under **Technical Projects** with measurable outcomes.`
       );
     }
 
-    // Default Fallback
+    // Scenario 6: INTERVIEW PREPARATION
+    if (lower.includes('interview') || lower.includes('question') || lower.includes('prep') || lower.includes('ask')) {
+      const tech = matching[0] || 'Core Stack';
+      return (
+        `### 🎯 Tailored Technical & System Design Interview Questions for **${role}**\n\n` +
+        `Based on your resume profile and the job requirements, here are the most probable interview questions:\n\n` +
+        `1. **Technical Architecture Deep-Dive (${tech}):**\n` +
+        `   * *"Can you explain the concurrency model and performance trade-offs of ${tech} when handling heavy read/write operations?"*\n` +
+        `2. **Bridging the Tech Gap (${missing[0] || 'Cloud Infrastructure'}):**\n` +
+        `   * *"The role heavily utilizes ${missing[0] || 'container orchestration'}. How have you handled setting up environments or pipelines in past projects?"*\n` +
+        `3. **System Reliability & Debugging:**\n` +
+        `   * *"Walk us through a scenario where a database bottleneck or latency spike impacted production. How did you identify and remediate it?"*\n` +
+        `4. **Behavioral Ownership:**\n` +
+        `   * *"Tell us about a time you had to deliver a critical milestone under tight deadlines across distributed teams in ${region.split(' (')[0]}."*`
+      );
+    }
+
+    // Scenario 7: SUMMARY GENERATION
+    if (lower.includes('summary') || lower.includes('bio') || lower.includes('about')) {
+      return (
+        `### 📄 ATS-Optimized Professional Summary for **${role}**\n\n` +
+        `Here is a high-density, keyword-aligned summary ready to paste into your resume:\n\n` +
+        `> *"Results-driven **${role}** with proven expertise in **${matching.slice(0, 4).join(', ')}**. ` +
+        `Adept at architecting scalable microservices, optimizing database performance, and building resilient software systems. ` +
+        `Proven track record of improving operational throughput and delivering high-impact features in **${region.split(' (')[0]}**. ` +
+        `Committed to test-driven development, code quality, and driving measurable technical excellence."*`
+      );
+    }
+
+    // Comprehensive Default Fallback (Never short or generic!)
     return (
-      `Hello! I'm your **AI ATS Assistant**. I have analyzed your resume against the target role **${role}**.\n\n` +
-      `Here are a few things I can assist you with right now:\n\n` +
-      `* 📈 **Improve ATS Score:** Ask *"How can I increase my match score?"*\n` +
-      `* 🛠️ **Missing Skills:** Ask *"Why are ${missing.slice(0, 2).join(' and ')} important?"*\n` +
-      `* ✍️ **Bullet Rewriter:** Ask *"Rewrite my experience bullets using the STAR method"*\n` +
-      `* 🎤 **Interview Prep:** Ask *"Generate technical interview questions for this role"*\n` +
-      `* ⚡ **Resume Builder:** Head to the **Resume Builder** tab to export an ATS-compliant PDF.`
+      `### 🤖 AI ATS Career Strategist: Detailed Insights for **${role}**\n\n` +
+      `I am actively analyzing your resume against the **${role}** benchmark in **${region}** (Overall Compatibility: **${score}%**).\n\n` +
+      `#### 📌 Key Analysis Findings:\n` +
+      `* **Core Strengths:** \`${matching.slice(0, 4).join('`, `')}\`\n` +
+      `* **High-Priority Missing Keywords:** \`${missing.slice(0, 3).join('`, `')}\`\n` +
+      `* **Regional Market Demand:** High in ${region.split(' (')[0]} (${regInsights?.demandIndex || 92}/100)\n\n` +
+      `#### 💡 What would you like to explore next?\n` +
+      `* 💼 **Suitable Job Posts:** Ask *"Which job posts is my resume suitable for?"*\n` +
+      `* 🌍 **Regional Hiring Demand:** Ask *"What are the job opportunities in ${region.split(' (')[0]}?"*\n` +
+      `* 📊 **Score Explanation:** Ask *"Give me a full explanation of my ${score}% score"*\n` +
+      `* ✍️ **STAR Bullet Rewriter:** Ask *"Rewrite my experience bullets with numbers and metrics"*\n` +
+      `* 🎤 **Interview Prep:** Ask *"Generate technical interview questions for ${role}"*`
     );
   }
 
   private async callGeminiAPI(
     prompt: string,
-    _history: ChatMessage[],
+    history: ChatMessage[],
     contextResult: AnalysisResult | null
   ): Promise<string> {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${this.geminiApiKey}`;
 
-    const systemContext = contextResult
-      ? `You are an expert ATS (Applicant Tracking System) career coach. The user is applying for '${contextResult.jobTitle}' at '${contextResult.company}'. Their current ATS match score is ${contextResult.overallScore}%. Matching skills: ${contextResult.matchingSkills.join(', ')}. Missing skills: ${contextResult.missingSkills.join(', ')}.`
-      : `You are an expert ATS career coach helping users optimize their resumes.`;
+    const jobTitle = contextResult?.jobTitle || 'Full Stack Developer';
+    const region = contextResult?.region || 'India (Bangalore, Remote)';
+    const score = contextResult?.overallScore || 78;
+    const matching = contextResult?.matchingSkills?.join(', ') || 'Standard skills';
+    const missing = contextResult?.missingSkills?.join(', ') || 'None';
+    const topRoles = contextResult?.roleSuitability
+      ?.slice(0, 3)
+      .map((r) => `${r.roleTitle} (${r.suitabilityScore}%)`)
+      .join(', ') || 'Software Engineer';
+
+    const systemPrompt =
+      `You are an expert ATS (Applicant Tracking System) career strategist. ` +
+      `Candidate context: Target Job Post: '${jobTitle}', Target Region: '${region}', Current Score: ${score}%. ` +
+      `Matching Skills: ${matching}. Missing Skills: ${missing}. Suitable Roles: ${topRoles}. ` +
+      `Instructions: Provide full, thorough, step-by-step explanations in GitHub markdown. Never give shallow 2-sentence generic answers.`;
 
     const contents = [
+      ...history.slice(-4).map((m) => ({
+        role: m.sender === 'user' ? 'user' : 'model',
+        parts: [{ text: m.text }],
+      })),
       {
         role: 'user',
-        parts: [{ text: `${systemContext}\n\nUser Question: ${prompt}` }],
+        parts: [{ text: `${systemPrompt}\n\nCandidate Question: ${prompt}` }],
       },
     ];
 

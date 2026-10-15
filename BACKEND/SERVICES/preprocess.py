@@ -3,15 +3,17 @@ import spacy
 
 
 class TextPreprocessor:
-
     def __init__(self):
         try:
-            self.nlp = spacy.load("en_core_web_sm")
+            import en_core_web_sm
+            self.nlp = en_core_web_sm.load()
         except Exception:
-            # Fallback if model not downloaded
-            import spacy.cli
-            spacy.cli.download("en_core_web_sm")
-            self.nlp = spacy.load("en_core_web_sm")
+            try:
+                self.nlp = spacy.load("en_core_web_sm")
+            except Exception:
+                import spacy.cli
+                spacy.cli.download("en_core_web_sm")
+                self.nlp = spacy.load("en_core_web_sm")
 
     def clean_text(self, text: str) -> str:
         if not text:

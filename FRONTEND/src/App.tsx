@@ -8,6 +8,7 @@ import { Analyze } from './pages/Analyze';
 import { Results } from './pages/Results';
 import { Dashboard } from './pages/Dashboard';
 import { ResumeBuilder } from './pages/ResumeBuilder';
+import { JobPosts } from './pages/JobPosts';
 import { ChatAssistantWidget } from './components/ChatAssistantWidget';
 
 // Auto scroll to top on route transition
@@ -39,6 +40,7 @@ export const App: React.FC = () => {
             <Routes>
               <Route path="/" element={<Home />} />
               <Route path="/analyze" element={<Analyze />} />
+              <Route path="/jobs" element={<JobPosts />} />
               <Route path="/results" element={<Results />} />
               <Route path="/builder" element={<ResumeBuilder />} />
               <Route path="/dashboard" element={<Dashboard />} />
